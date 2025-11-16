@@ -98,7 +98,7 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
     # Configure Claude Agent SDK with WebSearch enabled
     options = ClaudeAgentOptions(
         allowed_tools=["WebSearch"],
-        permission_mode='allow'
+        permission_mode='bypassPermissions'
     )
 
     current_question = initial_question
