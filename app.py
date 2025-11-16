@@ -5,6 +5,8 @@ Gradio application for generating multi-turn conversations using distilabel and 
 import os
 import json
 import asyncio
+import signal
+import threading
 from typing import List, Dict
 import gradio as gr
 from dotenv import load_dotenv
@@ -20,6 +22,25 @@ load_dotenv()
 
 # Initialize Anthropic client for initial question generation
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+
+# Monkey-patch signal.signal to avoid errors when running in non-main threads (e.g., Gradio worker threads)
+_original_signal = signal.signal
+
+def _thread_safe_signal(signalnum, handler):
+    """
+    Wrapper for signal.signal that only works in the main thread.
+    In worker threads, it returns a dummy handler to avoid ValueError.
+    """
+    if threading.current_thread() is threading.main_thread():
+        return _original_signal(signalnum, handler)
+    else:
+        # Return a dummy handler when not in main thread
+        # This prevents the ValueError while allowing the code to continue
+        return signal.SIG_DFL
+
+# Apply the monkey-patch
+signal.signal = _thread_safe_signal
 
 
 def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dict]:
