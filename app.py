@@ -74,7 +74,7 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
     for item in distiset["default"]["train"]:
         questions.append({
             "topic": topic,
-            "initial_question": item["generation"]
+            "initial_question": item["question"]
         })
 
     return questions
