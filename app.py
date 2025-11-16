@@ -81,7 +81,7 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
     return questions
 
 
-async def generate_multiturn_conversation_async(topic: str, initial_question: str, num_turns: int = 3) -> List[Dict]:
+async def generate_multiturn_conversation_async(topic: str, initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
     """
     Generate a multi-turn conversation using Claude Agent SDK with web search.
 
@@ -89,6 +89,7 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
         topic: The main topic of conversation
         initial_question: The initial user question
         num_turns: Number of conversation turns
+        update_callback: Optional callback function to call after each turn with current conversation state
 
     Returns:
         List of conversation messages
@@ -113,6 +114,10 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                     "content": current_question
                 })
 
+                # Call update callback after user message
+                if update_callback:
+                    update_callback(conversation)
+
                 try:
                     # Send the question to Claude Agent SDK using the correct API
                     await sdk_client.query(current_question)
@@ -130,6 +135,10 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                         "role": "assistant",
                         "content": assistant_content
                     })
+
+                    # Call update callback after assistant response
+                    if update_callback:
+                        update_callback(conversation)
 
                     # Generate a follow-up question for next turn (if not the last turn)
                     if turn < num_turns - 1:
@@ -154,6 +163,10 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                         "role": "assistant",
                         "content": error_msg
                     })
+
+                    # Call update callback even on error
+                    if update_callback:
+                        update_callback(conversation)
                     break
 
     except Exception as e:
@@ -163,10 +176,14 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
             "content": f"Error initializing conversation. Please check your API key and connection. Error: {str(e)}"
         })
 
+        # Call update callback even on error
+        if update_callback:
+            update_callback(conversation)
+
     return conversation
 
 
-def generate_multiturn_conversation_with_claude_agent(topic: str, initial_question: str, num_turns: int = 3) -> List[Dict]:
+def generate_multiturn_conversation_with_claude_agent(topic: str, initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
     """
     Wrapper function to run the async conversation generation.
 
@@ -174,11 +191,12 @@ def generate_multiturn_conversation_with_claude_agent(topic: str, initial_questi
         topic: The main topic of conversation
         initial_question: The initial user question
         num_turns: Number of conversation turns
+        update_callback: Optional callback function to call after each turn
 
     Returns:
         List of conversation messages
     """
-    return asyncio.run(generate_multiturn_conversation_async(topic, initial_question, num_turns))
+    return asyncio.run(generate_multiturn_conversation_async(topic, initial_question, num_turns, update_callback))
 
 
 def format_conversations_for_display(conversations: List[List[Dict]]) -> str:
@@ -198,9 +216,155 @@ def format_conversations_for_display(conversations: List[List[Dict]]) -> str:
     return output
 
 
+def format_conversation_as_html_accordion(
+    conversation_num: int,
+    conversation: List[Dict],
+    is_open: bool = False,
+    is_streaming: bool = False
+) -> str:
+    """Format a single conversation as an HTML accordion using details/summary."""
+    open_attr = "open" if is_open else ""
+    status = "🔄 In Progress..." if is_streaming else "✅ Complete"
+
+    html = f'<details {open_attr} style="margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; background-color: #f9f9f9;">\n'
+    html += f'<summary style="cursor: pointer; font-weight: bold; font-size: 16px; padding: 10px; background-color: #e9e9e9; border-radius: 5px; margin: -10px; margin-bottom: 10px;">'
+    html += f'Conversation {conversation_num} {status}'
+    html += '</summary>\n'
+    html += '<div style="padding: 15px; background-color: white; border-radius: 5px; margin-top: 10px;">\n'
+
+    for msg in conversation:
+        role = msg["role"].capitalize()
+        content = msg["content"].replace("\n", "<br>")
+
+        if role == "User":
+            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px;">\n'
+            html += f'<strong style="color: #1976D2;">👤 User:</strong><br>\n'
+            html += f'<span style="color: #333;">{content}</span>\n'
+            html += '</div>\n'
+        else:
+            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #f3e5f5; border-left: 4px solid #9C27B0; border-radius: 4px;">\n'
+            html += f'<strong style="color: #7B1FA2;">🤖 Assistant:</strong><br>\n'
+            html += f'<span style="color: #333;">{content}</span>\n'
+            html += '</div>\n'
+
+    html += '</div>\n'
+    html += '</details>\n'
+
+    return html
+
+
+def format_all_conversations_html(
+    all_conversations: List[List[Dict]],
+    current_conversation_idx: int = -1,
+    current_conversation_content: List[Dict] = None
+) -> str:
+    """Format all conversations as HTML accordions with streaming support."""
+    # Header section
+    html = '<div style="border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; margin-bottom: 15px;">\n'
+    html += '<h3 style="margin: 0; color: #333;">💬 Generated Conversations</h3>\n'
+
+    total = len(all_conversations)
+    if current_conversation_idx >= 0:
+        html += f'<p style="margin: 5px 0; color: #666; font-size: 14px;">Completed: {total} | In Progress: Conversation {current_conversation_idx + 1}</p>\n'
+    else:
+        html += f'<p style="margin: 5px 0; color: #666; font-size: 14px;">Total Conversations: {total}</p>\n'
+
+    html += '</div>\n'
+
+    # Scrollable container for conversations
+    html += '<div style="max-height: 600px; overflow-y: auto; padding: 10px; background-color: #fafafa; border-radius: 8px;">\n'
+
+    # Add completed conversations (collapsed)
+    for i, conversation in enumerate(all_conversations):
+        html += format_conversation_as_html_accordion(i + 1, conversation, is_open=False, is_streaming=False)
+
+    # Add current streaming conversation (expanded)
+    if current_conversation_idx >= 0 and current_conversation_content:
+        html += format_conversation_as_html_accordion(
+            current_conversation_idx + 1,
+            current_conversation_content,
+            is_open=True,
+            is_streaming=True
+        )
+
+    if len(all_conversations) == 0 and current_conversation_idx < 0:
+        html += '<p style="color: #888; text-align: center; padding: 30px; font-style: italic;">No conversations yet...</p>\n'
+
+    html += '</div>\n'
+
+    return html
+
+
+def generate_conversations_streaming(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()):
+    """
+    Generator function to stream conversation updates in real-time.
+
+    Args:
+        topic: The topic to generate conversations about
+        num_conversations: Number of conversations to generate (default: 20)
+        turns_per_conversation: Number of turns per conversation (default: 3)
+
+    Yields:
+        HTML string with accordion view of conversations
+    """
+    if not topic or topic.strip() == "":
+        yield "<p style='color: red;'>Please enter a valid topic.</p>"
+        return
+
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>"
+        return
+
+    progress(0, desc="Generating initial questions...")
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>⏳ Generating initial questions...</p>"
+
+    # Step 1: Generate diverse initial questions using distilabel
+    try:
+        questions = generate_user_questions(topic, num_conversations)
+    except Exception as e:
+        yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>"
+        return
+
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>✅ Questions generated! Starting conversations...</p>"
+
+    # Step 2: Generate multi-turn conversations for each question
+    all_conversations = []
+
+    for i, q in enumerate(questions):
+        progress((i + 1) / len(questions), desc=f"Generating conversation {i+1}/{num_conversations}...")
+
+        # Show current conversation as "in progress"
+        temp_conv = [{"role": "user", "content": q["initial_question"]}]
+        yield format_all_conversations_html(all_conversations, i, temp_conv)
+
+        # Generate the conversation
+        try:
+            conversation = generate_multiturn_conversation_with_claude_agent(
+                topic=q["topic"],
+                initial_question=q["initial_question"],
+                num_turns=turns_per_conversation
+            )
+
+            # Add completed conversation
+            all_conversations.append(conversation)
+
+            # Yield with conversation completed and collapsed
+            yield format_all_conversations_html(all_conversations, -1, None)
+
+        except Exception as e:
+            error_conv = [{"role": "assistant", "content": f"Error: {str(e)}"}]
+            all_conversations.append(error_conv)
+            yield format_all_conversations_html(all_conversations, -1, None)
+
+    progress(1.0, desc="Complete!")
+
+    # Final yield with all conversations
+    yield format_all_conversations_html(all_conversations, -1, None)
+
+
 def generate_conversations(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()) -> str:
     """
-    Main function to generate conversations about a topic.
+    Main function to generate conversations about a topic (non-streaming version for backward compatibility).
 
     Args:
         topic: The topic to generate conversations about
@@ -250,7 +414,7 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
     - **Distilabel** for generating diverse initial questions
     - **Claude Agent SDK** with web search for generating informative responses
 
-    Enter a topic below and click "Generate Conversations" to create 20 multi-turn conversations.
+    Enter a topic below and click "Generate Conversations" to create multi-turn conversations.
     """)
 
     with gr.Row():
@@ -280,12 +444,20 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
 
             generate_btn = gr.Button("Generate Conversations", variant="primary")
 
-    output = gr.Markdown(label="Generated Conversations")
+    gr.Markdown("## 📊 Live Conversation Output")
+    gr.Markdown("Watch conversations generate in real-time below. Each conversation expands while active and collapses when complete.")
 
+    # Streaming accordion output view
+    accordion_output = gr.HTML(
+        label="Streaming Conversations",
+        value="<p style='color: #888; text-align: center; padding: 20px;'>Click 'Generate Conversations' to begin...</p>"
+    )
+
+    # Wire up the streaming function
     generate_btn.click(
-        fn=generate_conversations,
+        fn=generate_conversations_streaming,
         inputs=[topic_input, num_conversations, num_turns],
-        outputs=output
+        outputs=accordion_output
     )
 
     gr.Markdown("""
