@@ -38,13 +38,10 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
                 model="claude-sonnet-4-5-20250929",
                 api_key=os.getenv("ANTHROPIC_API_KEY")
             ),
-            input_mappings={"instruction": "topic"},
+            template="Generate a unique, specific question that a curious user might ask about {{ topic }}. Make it different from typical questions - be creative and think of various angles (technical, practical, historical, comparative, etc.).",
+            columns=["topic"],
             output_mappings={"generation": "question"},
             system_prompt="You are an AI that generates diverse, interesting user questions about a given topic.",
-        )
-
-        generate_questions.set_instructions(
-            lambda x: f"Generate a unique, specific question that a curious user might ask about {x['topic']}. Make it different from typical questions - be creative and think of various angles (technical, practical, historical, comparative, etc.)."
         )
 
         load_data >> generate_questions
