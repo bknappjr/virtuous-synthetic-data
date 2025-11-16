@@ -47,10 +47,11 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
     """Generate initial user questions about the topic using distilabel."""
 
     # Create a pipeline to generate diverse user questions
+    # Add an index to each item to encourage unique questions
     with Pipeline(name="question-generation") as pipeline:
         load_data = LoadDataFromDicts(
             name="load_topics",
-            data=[{"topic": topic} for _ in range(num_conversations)]
+            data=[{"topic": topic, "question_number": i+1} for i in range(num_conversations)]
         )
 
         generate_questions = TextGeneration(
@@ -59,10 +60,10 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
                 model="claude-sonnet-4-5-20250929",
                 api_key=os.getenv("ANTHROPIC_API_KEY")
             ),
-            template="Generate a unique, specific question that a curious user might ask about {{ topic }}. Make it different from typical questions - be creative and think of various angles (technical, practical, historical, comparative, etc.).",
-            columns=["topic"],
+            template="Generate unique question #{{ question_number }} about {{ topic }}. Make this question COMPLETELY DIFFERENT from any other question someone might ask. Consider various angles: technical details, practical applications, historical context, ethical implications, future trends, comparisons, beginner vs expert perspectives, real-world examples, edge cases, or controversies. Output ONLY the question, nothing else.",
+            columns=["topic", "question_number"],
             output_mappings={"generation": "question"},
-            system_prompt="You are an AI that generates diverse, interesting user questions about a given topic.",
+            system_prompt="You are an AI that generates highly diverse, unique user questions. Each question must explore a different aspect or angle of the topic. Avoid repetition and generic questions.",
         )
 
         load_data >> generate_questions
@@ -100,58 +101,67 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
         permission_mode='allow'
     )
 
-    # Create a ClaudeSDKClient to maintain conversation context
-    sdk_client = ClaudeSDKClient(options=options)
-
     current_question = initial_question
 
-    for turn in range(num_turns):
-        # Add user message to our conversation log
+    try:
+        # Use ClaudeSDKClient as async context manager to maintain conversation context
+        async with ClaudeSDKClient(options=options) as sdk_client:
+            for turn in range(num_turns):
+                # Add user message to our conversation log
+                conversation.append({
+                    "role": "user",
+                    "content": current_question
+                })
+
+                try:
+                    # Send the question to Claude Agent SDK using the correct API
+                    await sdk_client.query(current_question)
+
+                    # Receive the response
+                    full_response = ""
+                    async for message in sdk_client.receive_response():
+                        # Accumulate the response text
+                        full_response += str(message)
+
+                    assistant_content = full_response.strip()
+
+                    # Add assistant response to conversation log
+                    conversation.append({
+                        "role": "assistant",
+                        "content": assistant_content
+                    })
+
+                    # Generate a follow-up question for next turn (if not the last turn)
+                    if turn < num_turns - 1:
+                        followup_response = anthropic_client.messages.create(
+                            model="claude-sonnet-4-5-20250929",
+                            max_tokens=200,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": f"Based on this conversation about {topic}, generate a natural follow-up question that would continue the discussion. Just output the question, nothing else.\n\nLast question: {current_question}\nLast answer: {assistant_content[:500]}..."
+                                }
+                            ]
+                        )
+
+                        current_question = followup_response.content[0].text.strip()
+
+                except Exception as e:
+                    # Log error and use a simpler response
+                    print(f"Error generating response: {e}")
+                    error_msg = f"Error generating response for this turn. Please check your API key and connection."
+                    conversation.append({
+                        "role": "assistant",
+                        "content": error_msg
+                    })
+                    break
+
+    except Exception as e:
+        print(f"Error initializing Claude SDK client: {e}")
         conversation.append({
-            "role": "user",
-            "content": current_question
+            "role": "assistant",
+            "content": f"Error initializing conversation. Please check your API key and connection. Error: {str(e)}"
         })
-
-        try:
-            # Send the question to Claude Agent SDK
-            # The SDK maintains conversation history automatically
-            full_response = ""
-            async for message in sdk_client.send_message(current_question):
-                # Accumulate the response text
-                full_response += str(message)
-
-            assistant_content = full_response.strip()
-
-            # Add assistant response to conversation log
-            conversation.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
-
-            # Generate a follow-up question for next turn (if not the last turn)
-            if turn < num_turns - 1:
-                followup_response = anthropic_client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=200,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"Based on this conversation about {topic}, generate a natural follow-up question that would continue the discussion. Just output the question, nothing else.\n\nLast question: {current_question}\nLast answer: {assistant_content[:500]}..."
-                        }
-                    ]
-                )
-
-                current_question = followup_response.content[0].text.strip()
-
-        except Exception as e:
-            # Log error and use a simpler response
-            print(f"Error generating response: {e}")
-            error_msg = f"Error generating response for this turn. Please check your API key and connection."
-            conversation.append({
-                "role": "assistant",
-                "content": error_msg
-            })
-            break
 
     return conversation
 
