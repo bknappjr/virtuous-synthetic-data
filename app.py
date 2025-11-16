@@ -4,6 +4,7 @@ Gradio application for generating multi-turn conversations using distilabel and 
 
 import os
 import json
+import asyncio
 from typing import List, Dict
 import gradio as gr
 from dotenv import load_dotenv
@@ -11,14 +12,14 @@ from distilabel.llms import AnthropicLLM
 from distilabel.pipeline import Pipeline
 from distilabel.steps import LoadDataFromDicts
 from distilabel.steps.tasks import TextGeneration
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from anthropic import Anthropic
-import anthropic
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Anthropic client
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Initialize Anthropic client for initial question generation
+anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dict]:
@@ -61,7 +62,7 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
     return questions
 
 
-def generate_multiturn_conversation_with_claude_agent(topic: str, initial_question: str, num_turns: int = 3) -> List[Dict]:
+async def generate_multiturn_conversation_async(topic: str, initial_question: str, num_turns: int = 3) -> List[Dict]:
     """
     Generate a multi-turn conversation using Claude Agent SDK with web search.
 
@@ -74,43 +75,36 @@ def generate_multiturn_conversation_with_claude_agent(topic: str, initial_questi
         List of conversation messages
     """
     conversation = []
+
+    # Configure Claude Agent SDK with WebSearch enabled
+    options = ClaudeAgentOptions(
+        allowed_tools=["WebSearch"],
+        permission_mode='allow'
+    )
+
+    # Create a ClaudeSDKClient to maintain conversation context
+    sdk_client = ClaudeSDKClient(options=options)
+
     current_question = initial_question
 
     for turn in range(num_turns):
-        # Add user message
+        # Add user message to our conversation log
         conversation.append({
             "role": "user",
             "content": current_question
         })
 
-        # Use Claude with web search to generate response
         try:
-            # Create a message with web search enabled
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=2048,
-                tools=[
-                    {
-                        "type": "web_search_20250110",
-                        "name": "web_search",
-                        "use_web_search": True,
-                        "max_results": 5
-                    }
-                ],
-                messages=[
-                    {
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    } for msg in conversation
-                ]
-            )
+            # Send the question to Claude Agent SDK
+            # The SDK maintains conversation history automatically
+            full_response = ""
+            async for message in sdk_client.send_message(current_question):
+                # Accumulate the response text
+                full_response += str(message)
 
-            # Extract the assistant's response
-            assistant_content = ""
-            for block in response.content:
-                if hasattr(block, 'text'):
-                    assistant_content += block.text
+            assistant_content = full_response.strip()
 
+            # Add assistant response to conversation log
             conversation.append({
                 "role": "assistant",
                 "content": assistant_content
@@ -118,7 +112,7 @@ def generate_multiturn_conversation_with_claude_agent(topic: str, initial_questi
 
             # Generate a follow-up question for next turn (if not the last turn)
             if turn < num_turns - 1:
-                followup_response = client.messages.create(
+                followup_response = anthropic_client.messages.create(
                     model="claude-sonnet-4-5-20250929",
                     max_tokens=200,
                     messages=[
@@ -132,44 +126,31 @@ def generate_multiturn_conversation_with_claude_agent(topic: str, initial_questi
                 current_question = followup_response.content[0].text.strip()
 
         except Exception as e:
-            # If web search fails, fall back to regular Claude
-            print(f"Web search error: {e}. Falling back to regular Claude.")
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=2048,
-                messages=[
-                    {
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    } for msg in conversation
-                ]
-            )
-
-            assistant_content = ""
-            for block in response.content:
-                if hasattr(block, 'text'):
-                    assistant_content += block.text
-
+            # Log error and use a simpler response
+            print(f"Error generating response: {e}")
+            error_msg = f"Error generating response for this turn. Please check your API key and connection."
             conversation.append({
                 "role": "assistant",
-                "content": assistant_content
+                "content": error_msg
             })
-
-            # Generate follow-up question
-            if turn < num_turns - 1:
-                followup_response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=200,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"Based on this conversation about {topic}, generate a natural follow-up question. Just output the question.\n\nLast question: {current_question}\nLast answer: {assistant_content[:500]}..."
-                        }
-                    ]
-                )
-                current_question = followup_response.content[0].text.strip()
+            break
 
     return conversation
+
+
+def generate_multiturn_conversation_with_claude_agent(topic: str, initial_question: str, num_turns: int = 3) -> List[Dict]:
+    """
+    Wrapper function to run the async conversation generation.
+
+    Args:
+        topic: The main topic of conversation
+        initial_question: The initial user question
+        num_turns: Number of conversation turns
+
+    Returns:
+        List of conversation messages
+    """
+    return asyncio.run(generate_multiturn_conversation_async(topic, initial_question, num_turns))
 
 
 def format_conversations_for_display(conversations: List[List[Dict]]) -> str:

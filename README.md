@@ -102,10 +102,25 @@ The application will launch and be accessible at `http://localhost:7860`
 
 ## Technical Details
 
-- **Distilabel**: Used for generating diverse initial questions through its pipeline architecture
+### Architecture
+
+- **Distilabel**: Used for generating diverse initial questions through its pipeline architecture with `TextGeneration` tasks
 - **Claude Agent SDK**: Powers the conversation responses with web search integration
+  - Uses `ClaudeSDKClient` class to maintain conversation context across multiple turns
+  - Each conversation session preserves full history, enabling contextual follow-ups
+  - WebSearch tool enabled for real-time information retrieval
 - **Model**: Uses Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
-- **Web Search**: Enabled via Anthropic's web search tool for current, accurate information
+- **Web Search**: Enabled via Claude Agent SDK's built-in WebSearch tool for current, accurate information
+
+### Implementation Highlights
+
+1. **Question Generation Pipeline**: Distilabel creates a pipeline that generates N unique questions about the topic
+2. **Multi-turn Conversations**: For each question, `ClaudeSDKClient` maintains conversation state:
+   - Sends user question to Claude with WebSearch enabled
+   - Receives response (Claude may use web search automatically when needed)
+   - Generates natural follow-up question based on conversation context
+   - Repeats for specified number of turns
+3. **Asynchronous Processing**: Uses Python's `asyncio` for efficient handling of SDK streaming responses
 
 ## Configuration
 
