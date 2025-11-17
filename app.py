@@ -7,7 +7,10 @@ import json
 import asyncio
 import signal
 import threading
-from typing import List, Dict
+import zipfile
+import tempfile
+from pathlib import Path
+from typing import List, Dict, Optional
 import gradio as gr
 from dotenv import load_dotenv
 from distilabel.llms import AnthropicLLM
@@ -296,6 +299,84 @@ def format_all_conversations_html(
     return html
 
 
+def format_conversation_as_markdown(conversation: List[Dict], conversation_num: int, topic: str = "") -> str:
+    """
+    Format a single conversation as a markdown document.
+
+    Args:
+        conversation: List of message dictionaries with 'role' and 'content' keys
+        conversation_num: The conversation number for the title
+        topic: Optional topic to include in the header
+
+    Returns:
+        Formatted markdown string
+    """
+    markdown = f"# Conversation {conversation_num}\n\n"
+
+    if topic:
+        markdown += f"**Topic:** {topic}\n\n"
+
+    markdown += "---\n\n"
+
+    for msg in conversation:
+        role = msg["role"].capitalize()
+        content = msg["content"]
+
+        if role == "User":
+            markdown += f"## 👤 User\n\n{content}\n\n"
+        else:
+            markdown += f"## 🤖 Assistant\n\n{content}\n\n"
+
+        markdown += "---\n\n"
+
+    return markdown
+
+
+def generate_zip_file(all_conversations: List[List[Dict]], topic: str = "") -> Optional[str]:
+    """
+    Generate a zip file containing markdown documents for each conversation.
+
+    Args:
+        all_conversations: List of conversations, where each conversation is a list of messages
+        topic: Optional topic string to include in filenames and documents
+
+    Returns:
+        Path to the generated zip file, or None if generation fails
+    """
+    if not all_conversations:
+        return None
+
+    try:
+        # Create a temporary directory for markdown files
+        temp_dir = tempfile.mkdtemp()
+
+        # Generate markdown files for each conversation
+        for i, conversation in enumerate(all_conversations, 1):
+            markdown_content = format_conversation_as_markdown(conversation, i, topic)
+
+            # Create a safe filename
+            filename = f"conversation_{i:03d}.md"
+            filepath = Path(temp_dir) / filename
+
+            # Write markdown file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+
+        # Create zip file
+        zip_path = Path(temp_dir) / "conversations.zip"
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Add all markdown files to the zip
+            for md_file in Path(temp_dir).glob("*.md"):
+                zipf.write(md_file, md_file.name)
+
+        return str(zip_path)
+
+    except Exception as e:
+        print(f"Error generating zip file: {e}")
+        return None
+
+
 def generate_conversations_streaming(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()):
     """
     Generator function to stream conversation updates in real-time.
@@ -306,27 +387,27 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
         turns_per_conversation: Number of turns per conversation (default: 3)
 
     Yields:
-        HTML string with accordion view of conversations
+        Tuple of (HTML string with accordion view of conversations, zip file path or None)
     """
     if not topic or topic.strip() == "":
-        yield "<p style='color: red;'>Please enter a valid topic.</p>"
+        yield "<p style='color: red;'>Please enter a valid topic.</p>", None
         return
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>"
+        yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>", None
         return
 
     progress(0, desc="Generating initial questions...")
-    yield "<p style='color: #888; text-align: center; padding: 20px;'>⏳ Generating initial questions...</p>"
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>⏳ Generating initial questions...</p>", None
 
     # Step 1: Generate diverse initial questions using distilabel
     try:
         questions = generate_user_questions(topic, num_conversations)
     except Exception as e:
-        yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>"
+        yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>", None
         return
 
-    yield "<p style='color: #888; text-align: center; padding: 20px;'>✅ Questions generated! Starting conversations...</p>"
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>✅ Questions generated! Starting conversations...</p>", None
 
     # Step 2: Generate multi-turn conversations for each question
     all_conversations = []
@@ -336,7 +417,7 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
 
         # Show current conversation as "in progress"
         temp_conv = [{"role": "user", "content": q["initial_question"]}]
-        yield format_all_conversations_html(all_conversations, i, temp_conv)
+        yield format_all_conversations_html(all_conversations, i, temp_conv), None
 
         # Generate the conversation
         try:
@@ -350,17 +431,20 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
             all_conversations.append(conversation)
 
             # Yield with conversation completed and collapsed
-            yield format_all_conversations_html(all_conversations, -1, None)
+            yield format_all_conversations_html(all_conversations, -1, None), None
 
         except Exception as e:
             error_conv = [{"role": "assistant", "content": f"Error: {str(e)}"}]
             all_conversations.append(error_conv)
-            yield format_all_conversations_html(all_conversations, -1, None)
+            yield format_all_conversations_html(all_conversations, -1, None), None
 
     progress(1.0, desc="Complete!")
 
-    # Final yield with all conversations
-    yield format_all_conversations_html(all_conversations, -1, None)
+    # Generate zip file with all conversations
+    zip_path = generate_zip_file(all_conversations, topic)
+
+    # Final yield with all conversations and the zip file
+    yield format_all_conversations_html(all_conversations, -1, None), zip_path
 
 
 def generate_conversations(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()) -> str:
@@ -454,11 +538,19 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
         value="<p style='color: #888; text-align: center; padding: 20px;'>Click 'Generate Conversations' to begin...</p>"
     )
 
+    # File download output
+    gr.Markdown("## 📦 Download Conversations")
+    download_output = gr.File(
+        label="Download ZIP File",
+        file_types=[".zip"],
+        type="filepath"
+    )
+
     # Wire up the streaming function
     generate_btn.click(
         fn=generate_conversations_streaming,
         inputs=[topic_input, num_conversations, num_turns],
-        outputs=accordion_output
+        outputs=[accordion_output, download_output]
     )
 
     gr.Markdown("""
