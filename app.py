@@ -65,10 +65,180 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
                 model="claude-haiku-4-5-20251001",
                 api_key=os.getenv("ANTHROPIC_API_KEY")
             ),
-            template="Generate unique question #{{ question_number }} about {{ topic }}. Make this question COMPLETELY DIFFERENT from any other question someone might ask. Consider various angles: technical details, practical applications, historical context, ethical implications, future trends, comparisons, beginner vs expert perspectives, real-world examples, edge cases, or controversies. Output ONLY the question, nothing else.",
-            columns=["topic", "question_number"],
+            template="Generate unique question #{{ question_number }}. Make this question grounded in a real world business use case using real examples of industry, companies, or potential economic conditions.",
+            columns=["question_number"],
             output_mappings={"generation": "question"},
-            system_prompt="You are an AI that generates highly diverse, unique user questions. Each question must explore a different aspect or angle of the topic. Avoid repetition and generic questions.",
+            system_prompt="""
+You are an AI that generates highly diverse, unique user questions regarding business. This can include things like market research, competitive analysis, economic conditions, and customer sentiment. Each question must explore a different aspect or angle of the topic. Avoid repetition and generic questions. Only ask questions that can be answered with web search. You can ask the system to generate resources for you such as diagrams, documents, html sites, and others. After each response, evaluate the response and ask a related follow up question. 
+Example topics :
+# Research & Analysis Patterns
+
+## 1. Comparative Technology Evaluation
+
+**Task**: Pick 2 similar frameworks or technologies such as vue and react, gradio and streamlit, pytorch and tensorflow, openai agentsdk and claude agent sdk. These are just some examples and you should think beyond them when deciding. Ask to compare the two frameworks. Then ask a follow up question per turn based on the information returned by the LLM.
+
+**Pattern**: Multi-dimensional comparison with weighted criteria
+
+**Extractable skill**: Structured technology comparison framework
+
+## 2. Trend Analysis & Forecasting
+
+**Task**: "Analyze the adoption trend of [technology/practice] over the past 3 years and identify inflection points"
+
+**Pattern**: Historical data gathering → pattern identification → trend extrapolation
+
+**Extractable skill**: Temporal trend analysis with inflection detection
+
+## 3. Concept Explanation with Layered Depth
+
+**Task**: "Explain [complex technical concept] at three levels: beginner, intermediate, expert"
+
+**Pattern**: Multi-level abstraction generation
+
+**Extractable skill**: Layered concept explanation generator
+
+## 4. Contradictory Claims Resolution
+
+**Task**: "Find conflicting claims about [topic] and determine which sources are most authoritative"
+
+**Pattern**: Source credibility evaluation → claim verification → consensus determination
+
+**Extractable skill**: Multi-source fact verification framework
+
+## 5. Learning Path Construction
+
+**Task**: "Build a learning roadmap for mastering [skill] from zero to professional level"
+
+**Pattern**: Prerequisite mapping → milestone sequencing → resource curation
+
+**Extractable skill**: Structured learning path generator
+
+# Information Synthesis Patterns
+
+## 6. Cross-Domain Analogy Finding
+
+**Task**: "Find analogies for [technical concept] from biology, physics, and economics"
+
+**Pattern**: Abstract pattern extraction → cross-domain mapping
+
+**Extractable skill**: Multi-domain analogy synthesizer
+
+## 7. Comprehensive Timeline Construction
+
+**Task**: "Create a detailed timeline of [event/development] with key milestones and dependencies"
+
+**Pattern**: Chronological data extraction → dependency mapping → milestone identification
+
+**Extractable skill**: Event timeline constructor
+
+## 8. Market Landscape Mapping
+
+**Task**: "Map the competitive landscape of [market segment] including major players, market shares, and differentiation"
+
+**Pattern**: Entity identification → characteristic extraction → positioning analysis
+
+**Extractable skill**: Market landscape analyzer
+
+## 9. Best Practices Extraction
+
+**Task**: "Extract engineering best practices for [domain] from case studies of successful companies"
+
+**Pattern**: Case study analysis → pattern identification → practice generalization
+
+**Extractable skill**: Best practice extraction framework
+
+## 10. Root Cause Analysis from Symptoms
+
+**Task**: "Given these symptoms in [system/process], identify the most likely root causes"
+
+**Pattern**: Symptom categorization → causal chain tracing → hypothesis ranking
+
+**Extractable skill**: Systematic root cause analyzer
+
+# Decision Support Patterns
+
+## 11. Multi-Criteria Decision Framework
+
+**Task**: "Help choose between [options] using criteria: cost, scalability, maintenance, security"
+
+**Pattern**: Criteria weighting → option scoring → sensitivity analysis
+
+**Extractable skill**: Weighted decision matrix generator
+
+## 12. Risk Assessment & Mitigation
+
+**Task**: "Identify risks in [approach/plan] and propose mitigation strategies"
+
+**Pattern**: Risk enumeration → likelihood/impact scoring → mitigation planning
+
+**Extractable skill**: Comprehensive risk assessment framework
+
+## 13. Trade-off Analysis
+
+**Task**: "Analyze the trade-offs between [approach A] and [approach B] across multiple dimensions"
+
+**Pattern**: Dimension identification → bidirectional impact analysis → trade-off visualization
+
+**Extractable skill**: Multi-dimensional trade-off analyzer
+
+## 14. Opportunity Cost Evaluation
+
+**Task**: "If we choose [option], what opportunities are we forgoing and what's their potential value?"
+
+**Pattern**: Alternative enumeration → value estimation → opportunity ranking
+
+**Extractable skill**: Opportunity cost calculator
+
+## 15. Assumption Validation
+
+**Task**: "List all assumptions in [plan/argument] and verify which are supported by evidence"
+
+**Pattern**: Assumption extraction → evidence gathering → validation scoring
+
+**Extractable skill**: Assumption verification framework
+
+# Pattern Recognition & Synthesis
+
+## 16. Common Failure Mode Identification
+
+**Task**: "What are the most common failure modes when implementing [practice/technology]?"
+
+**Pattern**: Case study mining → failure categorization → frequency analysis
+
+**Extractable skill**: Failure mode pattern extractor
+
+## 17. Emerging Pattern Detection
+
+**Task**: "Identify emerging patterns in [field] that aren't yet widely recognized"
+
+**Pattern**: Signal detection → noise filtering → pattern validation
+
+**Extractable skill**: Weak signal pattern detector
+
+## 18. Knowledge Gap Analysis
+
+**Task**: "Given my understanding of [topic], what critical knowledge gaps should I fill first?"
+
+**Pattern**: Concept mapping → dependency analysis → gap prioritization
+
+**Extractable skill**: Learning gap identifier
+
+## 19. Counterargument Generation
+
+**Task**: "Generate the strongest counterarguments to [position/claim]"
+
+**Pattern**: Position analysis → weakness identification → counterpoint construction
+
+**Extractable skill**: Steel-man argument generator
+
+## 20. Synthesis Across Perspectives
+
+**Task**: "Synthesize a coherent view of [topic] from multiple conflicting expert perspectives"
+
+**Pattern**: Perspective extraction → conflict identification → integration framework
+
+**Extractable skill**: Multi-perspective synthesizer
+                """,
         )
 
         load_data >> generate_questions
