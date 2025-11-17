@@ -282,6 +282,10 @@ async def generate_multiturn_conversation_async(initial_question: str, num_turns
         # Use ClaudeSDKClient as async context manager to maintain conversation context
         async with ClaudeSDKClient(options=options) as sdk_client:
             for turn in range(num_turns):
+                print(f"\n=== Starting Turn {turn + 1}/{num_turns} ===")
+                print(f"Current question: {current_question[:100]}...")
+                print(f"Conversation length before turn: {len(conversation)}")
+
                 # Add user message to our conversation log
                 conversation.append({
                     "role": "user",
@@ -294,6 +298,7 @@ async def generate_multiturn_conversation_async(initial_question: str, num_turns
 
                 try:
                     # Send the question to Claude Agent SDK using the correct API
+                    print(f"Sending query to SDK...")
                     await sdk_client.query(current_question)
 
                     # Receive the response with real-time streaming
@@ -305,9 +310,12 @@ async def generate_multiturn_conversation_async(initial_question: str, num_turns
                         "content": ""
                     })
 
+                    print(f"Starting to receive response...")
+                    message_count = 0
                     async for message in sdk_client.receive_response():
                         # Accumulate the response text
                         full_response += str(message)
+                        message_count += 1
 
                         # Update the last message (assistant response) with streaming content
                         conversation[-1]["content"] = full_response
@@ -315,6 +323,9 @@ async def generate_multiturn_conversation_async(initial_question: str, num_turns
                         # Call update callback with streaming updates
                         if update_callback:
                             update_callback(conversation)
+
+                    print(f"Streaming complete! Received {message_count} message chunks")
+                    print(f"Response length: {len(full_response)} characters")
 
                     assistant_content = full_response.strip()
 
@@ -325,34 +336,52 @@ async def generate_multiturn_conversation_async(initial_question: str, num_turns
                     if update_callback:
                         update_callback(conversation)
 
+                    print(f"Conversation length after response: {len(conversation)}")
+
                     # Generate a follow-up question for next turn (if not the last turn)
                     if turn < num_turns - 1:
-                        followup_response = anthropic_client.messages.create(
-                            model="claude-haiku-4-5-20251001",
-                            max_tokens=200,
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": f"Read the following answer carefully and generate a natural follow-up question that builds directly on the information provided in the answer. The question should dig deeper into a specific point mentioned in the answer, ask for clarification, or explore a related aspect discussed in the response. Output ONLY the question, nothing else.\n\nPrevious question: {current_question}\n\nAnswer to use as basis for follow-up:\n{assistant_content[:1500]}"
-                                }
-                            ]
-                        )
+                        print(f"Generating follow-up question for turn {turn + 2}...")
+                        try:
+                            followup_response = anthropic_client.messages.create(
+                                model="claude-haiku-4-5-20251001",
+                                max_tokens=200,
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": f"Read the following answer carefully and generate a natural follow-up question that builds directly on the information provided in the answer. The question should dig deeper into a specific point mentioned in the answer, ask for clarification, or explore a related aspect discussed in the response. Output ONLY the question, nothing else.\n\nPrevious question: {current_question}\n\nAnswer to use as basis for follow-up:\n{assistant_content[:1500]}"
+                                    }
+                                ]
+                            )
 
-                        current_question = followup_response.content[0].text.strip()
+                            current_question = followup_response.content[0].text.strip()
+                            print(f"Generated follow-up: {current_question[:100]}...")
+                        except Exception as e:
+                            # If follow-up generation fails, use a generic follow-up question
+                            print(f"Error generating follow-up question: {e}")
+                            current_question = f"Can you elaborate more on that?"
+                    else:
+                        print(f"Turn {turn + 1} is the last turn, skipping follow-up generation")
 
                 except Exception as e:
                     # Log error and use a simpler response
                     print(f"Error generating response: {e}")
                     error_msg = f"Error generating response for this turn. Please check your API key and connection."
-                    conversation.append({
-                        "role": "assistant",
-                        "content": error_msg
-                    })
+
+                    # Check if we already added a placeholder assistant message
+                    if conversation and conversation[-1]["role"] == "assistant":
+                        # Update the existing placeholder
+                        conversation[-1]["content"] = error_msg
+                    else:
+                        # Add a new assistant message
+                        conversation.append({
+                            "role": "assistant",
+                            "content": error_msg
+                        })
 
                     # Call update callback even on error
                     if update_callback:
                         update_callback(conversation)
-                    break
+                    continue
 
     except Exception as e:
         print(f"Error initializing Claude SDK client: {e}")
