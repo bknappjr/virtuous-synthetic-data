@@ -387,27 +387,27 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
         turns_per_conversation: Number of turns per conversation (default: 3)
 
     Yields:
-        Tuple of (HTML string with accordion view of conversations, zip file path or None)
+        Tuple of (HTML string with accordion view of conversations, File update, download section visibility)
     """
     if not topic or topic.strip() == "":
-        yield "<p style='color: red;'>Please enter a valid topic.</p>", None
+        yield "<p style='color: red;'>Please enter a valid topic.</p>", gr.update(value=None, visible=False), gr.update(visible=False)
         return
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>", None
+        yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>", gr.update(value=None, visible=False), gr.update(visible=False)
         return
 
     progress(0, desc="Generating initial questions...")
-    yield "<p style='color: #888; text-align: center; padding: 20px;'>⏳ Generating initial questions...</p>", None
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>⏳ Generating initial questions...</p>", gr.update(value=None, visible=False), gr.update(visible=False)
 
     # Step 1: Generate diverse initial questions using distilabel
     try:
         questions = generate_user_questions(topic, num_conversations)
     except Exception as e:
-        yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>", None
+        yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>", gr.update(value=None, visible=False), gr.update(visible=False)
         return
 
-    yield "<p style='color: #888; text-align: center; padding: 20px;'>✅ Questions generated! Starting conversations...</p>", None
+    yield "<p style='color: #888; text-align: center; padding: 20px;'>✅ Questions generated! Starting conversations...</p>", gr.update(value=None, visible=False), gr.update(visible=False)
 
     # Step 2: Generate multi-turn conversations for each question
     all_conversations = []
@@ -417,7 +417,7 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
 
         # Show current conversation as "in progress"
         temp_conv = [{"role": "user", "content": q["initial_question"]}]
-        yield format_all_conversations_html(all_conversations, i, temp_conv), None
+        yield format_all_conversations_html(all_conversations, i, temp_conv), gr.update(value=None, visible=False), gr.update(visible=False)
 
         # Generate the conversation
         try:
@@ -431,20 +431,20 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
             all_conversations.append(conversation)
 
             # Yield with conversation completed and collapsed
-            yield format_all_conversations_html(all_conversations, -1, None), None
+            yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=None, visible=False), gr.update(visible=False)
 
         except Exception as e:
             error_conv = [{"role": "assistant", "content": f"Error: {str(e)}"}]
             all_conversations.append(error_conv)
-            yield format_all_conversations_html(all_conversations, -1, None), None
+            yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=None, visible=False), gr.update(visible=False)
 
     progress(1.0, desc="Complete!")
 
     # Generate zip file with all conversations
     zip_path = generate_zip_file(all_conversations, topic)
 
-    # Final yield with all conversations and the zip file
-    yield format_all_conversations_html(all_conversations, -1, None), zip_path
+    # Final yield with all conversations and the zip file (now visible)
+    yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=zip_path, visible=True), gr.update(visible=True)
 
 
 def generate_conversations(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()) -> str:
@@ -538,19 +538,22 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
         value="<p style='color: #888; text-align: center; padding: 20px;'>Click 'Generate Conversations' to begin...</p>"
     )
 
-    # File download output
-    gr.Markdown("## 📦 Download Conversations")
-    download_output = gr.File(
-        label="Download ZIP File",
-        file_types=[".zip"],
-        type="filepath"
-    )
+    # File download output (hidden until ready)
+    with gr.Column(visible=False) as download_section:
+        gr.Markdown("## 📦 Download Conversations")
+        download_output = gr.File(
+            label="Download ZIP File",
+            file_types=[".zip"],
+            type="filepath",
+            visible=True
+        )
 
     # Wire up the streaming function
     generate_btn.click(
         fn=generate_conversations_streaming,
         inputs=[topic_input, num_conversations, num_turns],
-        outputs=[accordion_output, download_output]
+        outputs=[accordion_output, download_output, download_section],
+        show_progress="hidden"
     )
 
     gr.Markdown("""
