@@ -9,6 +9,8 @@ import signal
 import threading
 import zipfile
 import tempfile
+import time
+import concurrent.futures
 from pathlib import Path
 from typing import List, Dict, Optional
 import gradio as gr
@@ -99,11 +101,15 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
     """
     conversation = []
 
-    # Configure Claude Agent SDK with WebSearch enabled
+    # Configure Claude Agent SDK with WebSearch enabled and thinking disabled
     options = ClaudeAgentOptions(
         allowed_tools=["WebSearch"],
         permission_mode='bypassPermissions',
-        model='claude-3-5-haiku-20241022'
+        model='claude-3-5-haiku-20241022',
+        thinking={
+            "type": "disabled",
+            "budget_tokens": 0
+        }
     )
 
     current_question = initial_question
@@ -126,21 +132,32 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                     # Send the question to Claude Agent SDK using the correct API
                     await sdk_client.query(current_question)
 
-                    # Receive the response
+                    # Receive the response with real-time streaming
                     full_response = ""
+
+                    # Add a placeholder for the assistant response that we'll update during streaming
+                    conversation.append({
+                        "role": "assistant",
+                        "content": ""
+                    })
+
                     async for message in sdk_client.receive_response():
                         # Accumulate the response text
                         full_response += str(message)
 
+                        # Update the last message (assistant response) with streaming content
+                        conversation[-1]["content"] = full_response
+
+                        # Call update callback with streaming updates
+                        if update_callback:
+                            update_callback(conversation)
+
                     assistant_content = full_response.strip()
 
-                    # Add assistant response to conversation log
-                    conversation.append({
-                        "role": "assistant",
-                        "content": assistant_content
-                    })
+                    # Update with final cleaned content
+                    conversation[-1]["content"] = assistant_content
 
-                    # Call update callback after assistant response
+                    # Call update callback after assistant response is complete
                     if update_callback:
                         update_callback(conversation)
 
@@ -230,25 +247,25 @@ def format_conversation_as_html_accordion(
     open_attr = "open" if is_open else ""
     status = "🔄 In Progress..." if is_streaming else "✅ Complete"
 
-    html = f'<details {open_attr} style="margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; background-color: #f9f9f9;">\n'
-    html += f'<summary style="cursor: pointer; font-weight: bold; font-size: 16px; padding: 10px; background-color: #e9e9e9; border-radius: 5px; margin: -10px; margin-bottom: 10px;">'
+    html = f'<details {open_attr} style="margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; background-color: white; opacity: 1;">\n'
+    html += f'<summary style="cursor: pointer; font-weight: bold; font-size: 16px; padding: 10px; background-color: #e9e9e9; border-radius: 5px; margin: -10px; margin-bottom: 10px; opacity: 1;">'
     html += f'Conversation {conversation_num} {status}'
     html += '</summary>\n'
-    html += '<div style="padding: 15px; background-color: white; border-radius: 5px; margin-top: 10px;">\n'
+    html += '<div style="padding: 15px; background-color: white; border-radius: 5px; margin-top: 10px; opacity: 1;">\n'
 
     for msg in conversation:
         role = msg["role"].capitalize()
         content = msg["content"].replace("\n", "<br>")
 
         if role == "User":
-            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px;">\n'
-            html += f'<strong style="color: #1976D2;">👤 User:</strong><br>\n'
-            html += f'<span style="color: #333;">{content}</span>\n'
+            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px; opacity: 1;">\n'
+            html += f'<strong style="color: #1976D2; opacity: 1;">👤 User:</strong><br>\n'
+            html += f'<span style="color: #333; opacity: 1;">{content}</span>\n'
             html += '</div>\n'
         else:
-            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #f3e5f5; border-left: 4px solid #9C27B0; border-radius: 4px;">\n'
-            html += f'<strong style="color: #7B1FA2;">🤖 Assistant:</strong><br>\n'
-            html += f'<span style="color: #333;">{content}</span>\n'
+            html += f'<div style="margin-bottom: 15px; padding: 10px; background-color: #f3e5f5; border-left: 4px solid #9C27B0; border-radius: 4px; opacity: 1;">\n'
+            html += f'<strong style="color: #7B1FA2; opacity: 1;">🤖 Assistant:</strong><br>\n'
+            html += f'<span style="color: #333; opacity: 1;">{content}</span>\n'
             html += '</div>\n'
 
     html += '</div>\n'
@@ -276,7 +293,7 @@ def format_all_conversations_html(
     html += '</div>\n'
 
     # Scrollable container for conversations
-    html += '<div style="max-height: 600px; overflow-y: auto; padding: 10px; background-color: #fafafa; border-radius: 8px;">\n'
+    html += '<div style="max-height: 600px; overflow-y: auto; padding: 10px; background-color: white; border-radius: 8px; opacity: 1;">\n'
 
     # Add completed conversations (collapsed)
     for i, conversation in enumerate(all_conversations):
@@ -412,20 +429,50 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
     # Step 2: Generate multi-turn conversations for each question
     all_conversations = []
 
+    # Shared state for streaming updates
+    streaming_state = {"current_conv": []}
+
     for i, q in enumerate(questions):
         progress((i + 1) / len(questions), desc=f"Generating conversation {i+1}/{num_conversations}...")
 
-        # Show current conversation as "in progress"
-        temp_conv = [{"role": "user", "content": q["initial_question"]}]
-        yield format_all_conversations_html(all_conversations, i, temp_conv), gr.update(value=None, visible=False), gr.update(visible=False)
+        # Reset streaming state for new conversation
+        streaming_state["current_conv"] = []
 
-        # Generate the conversation
+        # Define callback to update UI in real-time during conversation
+        def streaming_update_callback(conversation_snapshot):
+            # Store the current state and yield to UI
+            streaming_state["current_conv"] = conversation_snapshot.copy()
+
+        # Generate the conversation with streaming updates
         try:
-            conversation = generate_multiturn_conversation_with_claude_agent(
-                topic=q["topic"],
-                initial_question=q["initial_question"],
-                num_turns=turns_per_conversation
-            )
+            # Create a wrapper that yields updates during generation
+            async def generate_with_yields():
+                return await generate_multiturn_conversation_async(
+                    topic=q["topic"],
+                    initial_question=q["initial_question"],
+                    num_turns=turns_per_conversation,
+                    update_callback=streaming_update_callback
+                )
+
+            # Run async function in a thread-safe way
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # Use a custom approach to yield during execution
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(lambda: loop.run_until_complete(generate_with_yields()))
+
+                # Poll for updates while the task is running
+                while not future.done():
+                    if streaming_state["current_conv"]:
+                        # Yield current state while conversation is in progress
+                        yield format_all_conversations_html(all_conversations, i, streaming_state["current_conv"]), gr.update(value=None, visible=False), gr.update(visible=False)
+                    time.sleep(0.05)  # Small delay to avoid overwhelming the UI
+
+                # Get the final conversation
+                conversation = future.result()
+
+            loop.close()
 
             # Add completed conversation
             all_conversations.append(conversation)
@@ -434,6 +481,8 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
             yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=None, visible=False), gr.update(visible=False)
 
         except Exception as e:
+            if 'loop' in locals():
+                loop.close()
             error_conv = [{"role": "assistant", "content": f"Error: {str(e)}"}]
             all_conversations.append(error_conv)
             yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=None, visible=False), gr.update(visible=False)
