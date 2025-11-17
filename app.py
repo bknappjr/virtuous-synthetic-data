@@ -62,7 +62,7 @@ def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dic
         generate_questions = TextGeneration(
             name="generate_questions",
             llm=AnthropicLLM(
-                model="claude-3-5-haiku-20241022",
+                model="claude-haiku-4-5-20251001",
                 api_key=os.getenv("ANTHROPIC_API_KEY")
             ),
             template="Generate unique question #{{ question_number }} about {{ topic }}. Make this question COMPLETELY DIFFERENT from any other question someone might ask. Consider various angles: technical details, practical applications, historical context, ethical implications, future trends, comparisons, beginner vs expert perspectives, real-world examples, edge cases, or controversies. Output ONLY the question, nothing else.",
@@ -105,7 +105,7 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
     options = ClaudeAgentOptions(
         allowed_tools=["WebSearch"],
         permission_mode='bypassPermissions',
-        model='claude-3-5-haiku-20241022'
+        model='claude-haiku-4-5-20251001'
     )
 
     current_question = initial_question
@@ -160,7 +160,7 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                     # Generate a follow-up question for next turn (if not the last turn)
                     if turn < num_turns - 1:
                         followup_response = anthropic_client.messages.create(
-                            model="claude-3-5-haiku-20241022",
+                            model="claude-haiku-4-5-20251001",
                             max_tokens=200,
                             messages=[
                                 {
