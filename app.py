@@ -48,15 +48,15 @@ def _thread_safe_signal(signalnum, handler):
 signal.signal = _thread_safe_signal
 
 
-def generate_user_questions(topic: str, num_conversations: int = 20) -> List[Dict]:
-    """Generate initial user questions about the topic using distilabel."""
+def generate_user_questions(num_conversations: int = 20) -> List[Dict]:
+    """Generate initial user questions using distilabel."""
 
     # Create a pipeline to generate diverse user questions
     # Add an index to each item to encourage unique questions
     with Pipeline(name="question-generation") as pipeline:
         load_data = LoadDataFromDicts(
             name="load_topics",
-            data=[{"topic": topic, "question_number": i+1} for i in range(num_conversations)]
+            data=[{"question_number": i+1} for i in range(num_conversations)]
         )
 
         generate_questions = TextGeneration(
@@ -249,19 +249,17 @@ Example topics :
     questions = []
     for item in distiset["default"]["train"]:
         questions.append({
-            "topic": topic,
             "initial_question": item["question"]
         })
 
     return questions
 
 
-async def generate_multiturn_conversation_async(topic: str, initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
+async def generate_multiturn_conversation_async(initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
     """
     Generate a multi-turn conversation using Claude Agent SDK with web search.
 
     Args:
-        topic: The main topic of conversation
         initial_question: The initial user question
         num_turns: Number of conversation turns
         update_callback: Optional callback function to call after each turn with current conversation state
@@ -335,7 +333,7 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
                             messages=[
                                 {
                                     "role": "user",
-                                    "content": f"Read the following answer carefully and generate a natural follow-up question that builds directly on the information provided in the answer. The question should dig deeper into a specific point mentioned in the answer, ask for clarification, or explore a related aspect discussed in the response. Output ONLY the question, nothing else.\n\nTopic: {topic}\n\nPrevious question: {current_question}\n\nAnswer to use as basis for follow-up:\n{assistant_content[:1500]}"
+                                    "content": f"Read the following answer carefully and generate a natural follow-up question that builds directly on the information provided in the answer. The question should dig deeper into a specific point mentioned in the answer, ask for clarification, or explore a related aspect discussed in the response. Output ONLY the question, nothing else.\n\nPrevious question: {current_question}\n\nAnswer to use as basis for follow-up:\n{assistant_content[:1500]}"
                                 }
                             ]
                         )
@@ -370,12 +368,11 @@ async def generate_multiturn_conversation_async(topic: str, initial_question: st
     return conversation
 
 
-def generate_multiturn_conversation_with_claude_agent(topic: str, initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
+def generate_multiturn_conversation_with_claude_agent(initial_question: str, num_turns: int = 3, update_callback=None) -> List[Dict]:
     """
     Wrapper function to run the async conversation generation.
 
     Args:
-        topic: The main topic of conversation
         initial_question: The initial user question
         num_turns: Number of conversation turns
         update_callback: Optional callback function to call after each turn
@@ -383,7 +380,7 @@ def generate_multiturn_conversation_with_claude_agent(topic: str, initial_questi
     Returns:
         List of conversation messages
     """
-    return asyncio.run(generate_multiturn_conversation_async(topic, initial_question, num_turns, update_callback))
+    return asyncio.run(generate_multiturn_conversation_async(initial_question, num_turns, update_callback))
 
 
 def format_conversations_for_display(conversations: List[List[Dict]]) -> str:
@@ -482,22 +479,18 @@ def format_all_conversations_html(
     return html
 
 
-def format_conversation_as_markdown(conversation: List[Dict], conversation_num: int, topic: str = "") -> str:
+def format_conversation_as_markdown(conversation: List[Dict], conversation_num: int) -> str:
     """
     Format a single conversation as a markdown document.
 
     Args:
         conversation: List of message dictionaries with 'role' and 'content' keys
         conversation_num: The conversation number for the title
-        topic: Optional topic to include in the header
 
     Returns:
         Formatted markdown string
     """
     markdown = f"# Conversation {conversation_num}\n\n"
-
-    if topic:
-        markdown += f"**Topic:** {topic}\n\n"
 
     markdown += "---\n\n"
 
@@ -515,13 +508,12 @@ def format_conversation_as_markdown(conversation: List[Dict], conversation_num: 
     return markdown
 
 
-def generate_zip_file(all_conversations: List[List[Dict]], topic: str = "") -> Optional[str]:
+def generate_zip_file(all_conversations: List[List[Dict]]) -> Optional[str]:
     """
     Generate a zip file containing markdown documents for each conversation.
 
     Args:
         all_conversations: List of conversations, where each conversation is a list of messages
-        topic: Optional topic string to include in filenames and documents
 
     Returns:
         Path to the generated zip file, or None if generation fails
@@ -535,7 +527,7 @@ def generate_zip_file(all_conversations: List[List[Dict]], topic: str = "") -> O
 
         # Generate markdown files for each conversation
         for i, conversation in enumerate(all_conversations, 1):
-            markdown_content = format_conversation_as_markdown(conversation, i, topic)
+            markdown_content = format_conversation_as_markdown(conversation, i)
 
             # Create a safe filename
             filename = f"conversation_{i:03d}.md"
@@ -560,22 +552,17 @@ def generate_zip_file(all_conversations: List[List[Dict]], topic: str = "") -> O
         return None
 
 
-def generate_conversations_streaming(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()):
+def generate_conversations_streaming(num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()):
     """
     Generator function to stream conversation updates in real-time.
 
     Args:
-        topic: The topic to generate conversations about
         num_conversations: Number of conversations to generate (default: 20)
         turns_per_conversation: Number of turns per conversation (default: 3)
 
     Yields:
         Tuple of (HTML string with accordion view of conversations, File update, download section visibility)
     """
-    if not topic or topic.strip() == "":
-        yield "<p style='color: red;'>Please enter a valid topic.</p>", gr.update(value=None, visible=False), gr.update(visible=False)
-        return
-
     if not os.getenv("ANTHROPIC_API_KEY"):
         yield "<p style='color: red;'>Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key.</p>", gr.update(value=None, visible=False), gr.update(visible=False)
         return
@@ -585,7 +572,7 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
 
     # Step 1: Generate diverse initial questions using distilabel
     try:
-        questions = generate_user_questions(topic, num_conversations)
+        questions = generate_user_questions(num_conversations)
     except Exception as e:
         yield f"<p style='color: red;'>Error generating questions: {str(e)}</p>", gr.update(value=None, visible=False), gr.update(visible=False)
         return
@@ -614,7 +601,6 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
             # Create a wrapper that yields updates during generation
             async def generate_with_yields():
                 return await generate_multiturn_conversation_async(
-                    topic=q["topic"],
                     initial_question=q["initial_question"],
                     num_turns=turns_per_conversation,
                     update_callback=streaming_update_callback
@@ -656,34 +642,30 @@ def generate_conversations_streaming(topic: str, num_conversations: int = 20, tu
     progress(1.0, desc="Complete!")
 
     # Generate zip file with all conversations
-    zip_path = generate_zip_file(all_conversations, topic)
+    zip_path = generate_zip_file(all_conversations)
 
     # Final yield with all conversations and the zip file (now visible)
     yield format_all_conversations_html(all_conversations, -1, None), gr.update(value=zip_path, visible=True), gr.update(visible=True)
 
 
-def generate_conversations(topic: str, num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()) -> str:
+def generate_conversations(num_conversations: int = 20, turns_per_conversation: int = 3, progress=gr.Progress()) -> str:
     """
-    Main function to generate conversations about a topic (non-streaming version for backward compatibility).
+    Main function to generate conversations (non-streaming version for backward compatibility).
 
     Args:
-        topic: The topic to generate conversations about
         num_conversations: Number of conversations to generate (default: 20)
         turns_per_conversation: Number of turns per conversation (default: 3)
 
     Returns:
         Formatted string of all conversations
     """
-    if not topic or topic.strip() == "":
-        return "Please enter a valid topic."
-
     if not os.getenv("ANTHROPIC_API_KEY"):
         return "Error: ANTHROPIC_API_KEY environment variable not set. Please create a .env file with your API key."
 
     progress(0, desc="Generating initial questions...")
 
     # Step 1: Generate diverse initial questions using distilabel
-    questions = generate_user_questions(topic, num_conversations)
+    questions = generate_user_questions(num_conversations)
 
     # Step 2: Generate multi-turn conversations for each question
     all_conversations = []
@@ -692,7 +674,6 @@ def generate_conversations(topic: str, num_conversations: int = 20, turns_per_co
         progress((i + 1) / len(questions), desc=f"Generating conversation {i+1}/{num_conversations}...")
 
         conversation = generate_multiturn_conversation_with_claude_agent(
-            topic=q["topic"],
             initial_question=q["initial_question"],
             num_turns=turns_per_conversation
         )
@@ -710,21 +691,15 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
     gr.Markdown("""
     # Multi-turn Conversation Generator
 
-    This application generates multi-turn conversations about any topic using:
+    This application generates multi-turn conversations using:
     - **Distilabel** for generating diverse initial questions
     - **Claude Agent SDK** with web search for generating informative responses
 
-    Enter a topic below and click "Generate Conversations" to create multi-turn conversations.
+    Click "Generate Conversations" to create multi-turn conversations.
     """)
 
     with gr.Row():
         with gr.Column():
-            topic_input = gr.Textbox(
-                label="Topic",
-                placeholder="e.g., Climate Change, Quantum Computing, Ancient Rome...",
-                lines=1
-            )
-
             with gr.Row():
                 num_conversations = gr.Slider(
                     minimum=1,
@@ -766,7 +741,7 @@ with gr.Blocks(title="Multi-turn Conversation Generator") as demo:
     # Wire up the streaming function
     generate_btn.click(
         fn=generate_conversations_streaming,
-        inputs=[topic_input, num_conversations, num_turns],
+        inputs=[num_conversations, num_turns],
         outputs=[accordion_output, download_output, download_section],
         show_progress="hidden"
     )
